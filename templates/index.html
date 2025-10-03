@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Interview Practice</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #fafbfc;
+        }
+        .container {
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+        }
+        .side-left {
+            width: 340px;
+            background: #f2f2f2;
+            padding: 42px 30px 0 30px;
+            box-sizing: border-box;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .main-center {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding-top: 0;
+            height: 100vh;
+        }
+        .question {
+            font-size: 30px;
+            font-weight: bold;
+            margin-bottom: 28px;
+            color: #222;
+        }
+        .timer {
+            font-size: 24px;
+            margin-bottom: 36px;
+        }
+        .video-box {
+            margin: 0 auto 35px auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #camera, #playback {
+            width: 700px;
+            height: 480px;
+            background: #111;
+            border: 3px solid #0074d9;
+            border-radius: 12px;
+            margin-bottom: 22px;
+            object-fit: cover;
+            box-shadow: 0 6px 24px rgba(80,80,80,.09);
+        }
+        .transcript-box {
+            width: 760px;
+            margin-top: 28px;
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 26px;
+            box-shadow: 0 2px 8px rgba(80,80,80,.07);
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+        .transcript-text {
+            width: 100%;
+            font-size: 22px;
+            color: #333;
+            margin-bottom: 16px;
+            white-space: pre-line;
+            word-break: break-word;
+        }
+        .copy-btn {
+            padding: 10px 20px;
+            background: #0074d9;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 17px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .copy-btn:hover {
+            background: #005fa3;
+        }
+        .score-box {
+            margin-top: 32px;
+            font-size: 22px;
+            color: #555;
+            background: #f6f6f6;
+            border-radius: 8px;
+            padding: 18px 32px;
+            width: 440px;
+            text-align: center;
+        }
+        @media (max-width: 1100px) {
+            .main-center, .transcript-box, #camera, #playback { width: 95vw !important; min-width: unset; }
+            .side-left { width: 240px; }
+        }
+        @media (max-width: 800px) {
+            .container { flex-direction: column; }
+            .side-left { width: 100%; border-right: none; border-bottom: 1px solid #e0e0e0; align-items: center; }
+            .main-center { padding-top: 18px; height: auto; }
+            .transcript-box { width: 98vw; }
+            #camera, #playback { width: 99vw; height: 260px; }
+            .score-box { width: 96vw; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="side-left">
+        <div class="question" id="question">{{ question }}</div>
+        <div class="timer" id="timer">Ready</div>
+        <button id="next-question-btn" style="margin-top:18px;">Next Question</button>
+    </div>
+    <div class="main-center">
+        <div class="video-box">
+            <video id="camera" autoplay muted></video>
+            <video id="playback" controls style="display:none"></video>
+            <div>
+                <button id="prep-btn">Start Preparation</button>
+                <button id="start-btn" disabled>Start Recording</button>
+                <button id="stop-btn" disabled>Stop Recording</button>
+                <button id="upload-btn" disabled>Upload & Analyze</button>
+            </div>
+        </div>
+        <div class="score-box" id="score-box" style="display:none">
+            <div>Gaze Score: <span id="gaze-score"></span></div>
+            <div>Clarity Score: <span id="clarity-score"></span></div>
+            <div><b>Overall Score: <span id="overall-score"></span></b></div>
+        </div>
+        <div class="transcript-box" id="transcript-box" style="display:none">
+            <div class="transcript-text" id="transcript-text"></div>
+            <button class="copy-btn" onclick="copyTranscript()">Copy Transcript</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let cameraStream, mediaRecorder, recordedChunks = [];
+let preparationInterval, recordingInterval;
+let preparationSeconds = 30;
+let recordingSeconds = 180; // 3 minutes
+
+const camera = document.getElementById('camera');
+const playback = document.getElementById('playback');
+const prepBtn = document.getElementById('prep-btn');
+const startBtn = document.getElementById('start-btn');
+const stopBtn = document.getElementById('stop-btn');
+const uploadBtn = document.getElementById('upload-btn');
+const timer = document.getElementById('timer');
+const transcriptBox = document.getElementById('transcript-box');
+const transcriptText = document.getElementById('transcript-text');
+const scoreBox = document.getElementById('score-box');
+const gazeScoreElem = document.getElementById('gaze-score');
+const clarityScoreElem = document.getElementById('clarity-score');
+const overallScoreElem = document.getElementById('overall-score');
+const nextQuestionBtn = document.getElementById('next-question-btn');
+
+let isPreparing = false;
+let isRecording = false;
+
+function updateNextQuestionBtn() {
+    nextQuestionBtn.disabled = isPreparing || isRecording;
+}
+
+function updatePrepAndRecordBtns() {
+    prepBtn.disabled = isPreparing || isRecording;
+    startBtn.disabled = !(isPreparing && !isRecording);
+    stopBtn.disabled = !isRecording;
+}
+
+async function setupCamera() {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    camera.srcObject = cameraStream;
+}
+setupCamera();
+
+function updateTimerDisplay(type, seconds) {
+    if (type === "prep") {
+        timer.textContent = `Preparation: ${seconds}s`;
+    } else if (type === "recording") {
+        const min = String(Math.floor(seconds / 60)).padStart(1, '0');
+        const sec = String(seconds % 60).padStart(2, '0');
+        timer.textContent = `Recording: ${min}:${sec}`;
+    } else {
+        timer.textContent = "Ready";
+    }
+}
+
+function startPreparationTimer() {
+    isPreparing = true;
+    updateNextQuestionBtn();
+    updatePrepAndRecordBtns();
+    preparationSeconds = 30;
+    updateTimerDisplay("prep", preparationSeconds);
+    startBtn.disabled = false; // enable record during prep
+    preparationInterval = setInterval(() => {
+        preparationSeconds--;
+        updateTimerDisplay("prep", preparationSeconds);
+        if (preparationSeconds <= 0) {
+            clearInterval(preparationInterval);
+            isPreparing = false;
+            startBtn.disabled = true;
+            startRecording();
+        }
+    }, 1000);
+}
+
+function stopPreparationTimer() {
+    clearInterval(preparationInterval);
+    isPreparing = false;
+    updateNextQuestionBtn();
+    updatePrepAndRecordBtns();
+    startBtn.disabled = true;
+}
+
+function startRecordingTimer() {
+    isRecording = true;
+    updateNextQuestionBtn();
+    updatePrepAndRecordBtns();
+    recordingSeconds = 180;
+    updateTimerDisplay("recording", recordingSeconds);
+    recordingInterval = setInterval(() => {
+        recordingSeconds--;
+        updateTimerDisplay("recording", recordingSeconds);
+        if (recordingSeconds <= 0) {
+            stopRecording();
+        }
+    }, 1000);
+}
+
+function stopRecordingTimer() {
+    clearInterval(recordingInterval);
+    timer.textContent = "Done";
+    isRecording = false;
+    updateNextQuestionBtn();
+    updatePrepAndRecordBtns();
+}
+
+function startRecording() {
+    // If preparation timer is running, stop it!
+    if (isPreparing) {
+        stopPreparationTimer();
+    }
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(cameraStream);
+    mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        playback.src = URL.createObjectURL(blob);
+        playback.style.display = 'block';
+        camera.style.display = 'none';
+        uploadBtn.disabled = false;
+        stopRecordingTimer();
+    };
+    camera.style.display = 'block';
+    playback.style.display = 'none';
+    prepBtn.disabled = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    uploadBtn.disabled = true;
+    transcriptBox.style.display = 'none';
+    scoreBox.style.display = 'none';
+    startRecordingTimer();
+    mediaRecorder.start();
+}
+
+function stopRecording() {
+    stopBtn.disabled = true;
+    startBtn.disabled = true;
+    prepBtn.disabled = false;
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+    }
+    stopRecordingTimer();
+}
+
+prepBtn.onclick = () => {
+    prepBtn.disabled = true;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    uploadBtn.disabled = true;
+    transcriptBox.style.display = 'none';
+    scoreBox.style.display = 'none';
+    startPreparationTimer();
+    updateNextQuestionBtn();
+    updatePrepAndRecordBtns();
+};
+
+startBtn.onclick = () => {
+    startRecording();
+};
+
+stopBtn.onclick = () => {
+    stopRecording();
+};
+
+uploadBtn.onclick = () => {
+    uploadBtn.disabled = true;
+    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    const formData = new FormData();
+    formData.append('video', blob, 'recording.webm');
+    fetch('/upload', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            transcriptBox.style.display = 'flex';
+            transcriptText.textContent = data.transcript || 'No transcript';
+            gazeScoreElem.textContent = data.gaze_score;
+            clarityScoreElem.textContent = data.clarity_score;
+            overallScoreElem.textContent = data.overall_score;
+            scoreBox.style.display = 'block';
+        }).catch(() => {
+            transcriptText.textContent = 'Error analyzing video.';
+            transcriptBox.style.display = 'flex';
+        });
+};
+
+nextQuestionBtn.onclick = function() {
+    if (isPreparing || isRecording) return;
+    fetch('/next_question')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('question').textContent = data.question;
+            timer.textContent = 'Ready';
+            transcriptBox.style.display = 'none';
+            scoreBox.style.display = 'none';
+            prepBtn.disabled = false;
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+            uploadBtn.disabled = true;
+            camera.style.display = 'block';
+            playback.style.display = 'none';
+        });
+};
+
+function copyTranscript() {
+    const text = transcriptText.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        alert('Transcript copied!');
+    });
+}
+
+// Initialize button state
+updateNextQuestionBtn();
+updatePrepAndRecordBtns();
+</script>
+</body>
+</html>
