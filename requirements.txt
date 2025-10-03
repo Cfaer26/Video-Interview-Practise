@@ -1,0 +1,4 @@
+flask
+whisper
+opencv-python
+numpy
